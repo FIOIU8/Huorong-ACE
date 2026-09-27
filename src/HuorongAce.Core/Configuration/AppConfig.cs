@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text;
 
 namespace HuorongAce.Core.Configuration;
 
@@ -45,13 +46,21 @@ public sealed class AppConfig
         return Path.Combine(root, "Huorong", "Sysdiag", "QuarantineEx.db");
     }
 
-    /// <summary>Path of config.json, alongside the executable.</summary>
+    /// <summary>
+    /// Path of config.json. The executable directory is preferred. Protected
+    /// install directories fall back to the user's local application data.
+    /// </summary>
     public static string ConfigFilePath
     {
         get
         {
-            var dir = AppContext.BaseDirectory;
-            return Path.Combine(dir, "config.json");
+            var sidecar = Path.Combine(ExecutableDirectory(), "config.json");
+            if (File.Exists(sidecar) || CanWriteDirectory(Path.GetDirectoryName(sidecar)!))
+            {
+                return sidecar;
+            }
+
+            return UserConfigPath();
         }
     }
 
@@ -61,21 +70,32 @@ public sealed class AppConfig
     public static AppConfig Load()
     {
         var config = new AppConfig();
-        try
+        foreach (var path in ConfigPaths())
         {
-            if (File.Exists(ConfigFilePath))
+            try
             {
-                var json = File.ReadAllText(ConfigFilePath);
+                if (!File.Exists(path))
+                {
+                    continue;
+                }
+
+                var json = File.ReadAllText(path);
                 var loaded = JsonSerializer.Deserialize<AppConfig>(json, SerializerOptions);
                 if (loaded is not null)
                 {
                     config = loaded;
                 }
+
+                break;
             }
-        }
-        catch (JsonException)
-        {
-            // A corrupt file must not prevent start-up; defaults are used.
+            catch (JsonException)
+            {
+                break;
+            }
+            catch (IOException)
+            {
+                // Try the per-user fallback when the sidecar is inaccessible.
+            }
         }
 
         config.MigrateLegacyLogPath();
@@ -85,7 +105,19 @@ public sealed class AppConfig
     public void Save()
     {
         var json = JsonSerializer.Serialize(this, SerializerOptions);
-        File.WriteAllText(ConfigFilePath, json);
+        var sidecar = Path.Combine(ExecutableDirectory(), "config.json");
+        try
+        {
+            WriteAtomically(sidecar, json);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            WriteAtomically(UserConfigPath(), json);
+        }
+        catch (IOException)
+        {
+            WriteAtomically(UserConfigPath(), json);
+        }
     }
 
     /// <summary>
@@ -140,6 +172,87 @@ public sealed class AppConfig
         catch (IOException)
         {
             // Migration is best effort.
+        }
+    }
+
+    private static IEnumerable<string> ConfigPaths()
+    {
+        var sidecar = Path.Combine(ExecutableDirectory(), "config.json");
+        yield return sidecar;
+
+        var userPath = UserConfigPath();
+        if (!string.Equals(sidecar, userPath, StringComparison.OrdinalIgnoreCase))
+        {
+            yield return userPath;
+        }
+    }
+
+    private static string ExecutableDirectory()
+    {
+        var processPath = Environment.ProcessPath;
+        var directory = string.IsNullOrWhiteSpace(processPath)
+            ? null
+            : Path.GetDirectoryName(processPath);
+
+        return string.IsNullOrWhiteSpace(directory)
+            ? AppContext.BaseDirectory
+            : directory;
+    }
+
+    private static string UserConfigPath()
+    {
+        var root = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (string.IsNullOrWhiteSpace(root))
+        {
+            root = Path.GetTempPath();
+        }
+
+        return Path.Combine(root, "HuorongACE", "config.json");
+    }
+
+    private static bool CanWriteDirectory(string directory)
+    {
+        try
+        {
+            Directory.CreateDirectory(directory);
+            var probe = Path.Combine(directory, $".huorong-ace-{Guid.NewGuid():N}.tmp");
+            using (File.Create(probe))
+            {
+            }
+
+            File.Delete(probe);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return false;
+        }
+    }
+
+    private static void WriteAtomically(string path, string contents)
+    {
+        var directory = Path.GetDirectoryName(path)!;
+        Directory.CreateDirectory(directory);
+
+        var temporary = Path.Combine(directory, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+        try
+        {
+            File.WriteAllText(temporary, contents, new UTF8Encoding(false));
+            File.Move(temporary, path, overwrite: true);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(temporary))
+                {
+                    File.Delete(temporary);
+                }
+            }
+            catch (IOException)
+            {
+                // Best effort cleanup after a failed replacement.
+            }
         }
     }
 

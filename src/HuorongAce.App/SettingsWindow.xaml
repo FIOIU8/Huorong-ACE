@@ -8,14 +8,46 @@
     mc:Ignorable="d"
     Title="火绒ACE">
 
-    <Grid>
+    <Grid
+        x:Name="RootLayout"
+        UseLayoutRounding="True"
+        IsTabStop="True"
+        PointerPressed="OnRootPointerPressed"
+        Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="32" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Custom title bar keeps the system caption buttons while matching the app theme. -->
+        <Grid
+            x:Name="AppTitleBar"
+            Grid.Row="0"
+            Height="32"
+            Padding="16,0,0,0"
+            Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+            AutomationProperties.Name="火绒ACE 标题栏">
+            <TextBlock
+                VerticalAlignment="Center"
+                FontFamily="Microsoft YaHei UI"
+                FontSize="14"
+                FontWeight="SemiBold"
+                Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                IsHitTestVisible="False"
+                Text="火绒ACE" />
+        </Grid>
+
         <NavigationView
             x:Name="Navigation"
+            Grid.Row="1"
+            FontFamily="Microsoft YaHei UI"
             PaneTitle="设置"
             IsBackButtonVisible="Collapsed"
             IsSettingsVisible="False"
+            IsPaneToggleButtonVisible="True"
             PaneDisplayMode="Left"
-            OpenPaneLength="236"
+            OpenPaneLength="248"
+            CompactModeThresholdWidth="720"
             SelectionChanged="OnNavigationSelectionChanged">
 
             <NavigationView.AutoSuggestBox>
@@ -40,17 +72,25 @@
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>
-                <NavigationViewItem x:Name="NavAbout" Content="使用说明" Tag="About">
+                <NavigationViewItem x:Name="NavHelp" Content="使用说明" Tag="Help">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE946;" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="NavAbout" Content="关于" Tag="About">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE946;" />
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.FooterMenuItems>
 
-            <ScrollViewer VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="24,16,24,24" Spacing="10">
+            <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                <StackPanel Margin="32,28,32,36" Spacing="18" HorizontalAlignment="Stretch">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="设置" Style="{StaticResource PageTitleStyle}" />
+                        <TextBlock Text="管理监控行为、日志来源和测试操作" Style="{StaticResource PageSubtitleStyle}" />
+                    </StackPanel>
 
-                    <!-- Always-visible status strip. -->
                     <InfoBar
                         x:Name="StatusBar"
                         IsOpen="True"
@@ -60,75 +100,97 @@
                         Title="监控状态"
                         Message="正在读取…" />
 
-                    <!-- ============================ 监控 ============================ -->
-                    <StackPanel x:Name="MonitorPage" Spacing="10">
-                        <TextBlock Text="常规" Style="{StaticResource SectionHeaderStyle}" />
+                    <StackPanel x:Name="MonitorPage" Spacing="12">
+                        <TextBlock Text="监控" Style="{StaticResource SectionHeaderStyle}" />
                         <Border Style="{StaticResource SettingsCardStyle}">
-                            <StackPanel>
-                                <Grid Style="{StaticResource SettingsRowStyle}">
+                            <Grid HorizontalAlignment="Stretch">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid Grid.Row="0" Style="{StaticResource SettingsRowStyle}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,24,0">
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,28,0">
                                         <TextBlock Text="启用监控" Style="{StaticResource RowTitleStyle}" />
-                                        <TextBlock Text="监控火绒日志，命中关键词时弹出红屏" Style="{StaticResource RowDescriptionStyle}" />
+                                        <TextBlock Text="监控火绒日志，命中威胁时弹出红屏提示" Style="{StaticResource RowDescriptionStyle}" />
                                     </StackPanel>
-                                    <ToggleSwitch x:Name="EnabledSwitch" Grid.Column="1" Toggled="OnEnabledToggled" />
+                                    <ToggleSwitch x:Name="EnabledSwitch" Grid.Column="1" HorizontalAlignment="Right" OnContent="开" OffContent="关" Toggled="OnEnabledToggled" />
                                 </Grid>
 
-                                <Rectangle Style="{StaticResource DividerStyle}" />
+                                <Rectangle Grid.Row="1" Style="{StaticResource DividerStyle}" />
 
-                                <Grid Style="{StaticResource SettingsRowStyle}">
+                                <Grid Grid.Row="2" Style="{StaticResource SettingsRowStyle}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,24,0">
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,28,0">
+                                        <TextBlock Text="开机自启" Style="{StaticResource RowTitleStyle}" />
+                                        <TextBlock Text="登录 Windows 后自动启动并隐藏到托盘运行" Style="{StaticResource RowDescriptionStyle}" />
+                                    </StackPanel>
+                                    <ToggleSwitch x:Name="StartupSwitch" Grid.Column="1" HorizontalAlignment="Right" OnContent="开" OffContent="关" Toggled="OnStartupToggled" />
+                                </Grid>
+
+                                <Rectangle Grid.Row="3" Style="{StaticResource DividerStyle}" />
+
+                                <Grid Grid.Row="4" Style="{StaticResource SettingsRowStyle}">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,28,0">
                                         <TextBlock Text="轮询间隔" Style="{StaticResource RowTitleStyle}" />
-                                        <TextBlock Text="每隔多少秒检查一次火绒日志" Style="{StaticResource RowDescriptionStyle}" />
+                                        <TextBlock Text="每隔多少秒检查一次火绒日志，最小值为 1 秒" Style="{StaticResource RowDescriptionStyle}" />
                                     </StackPanel>
-                                    <TextBox x:Name="PollIntervalBox" Grid.Column="1" Width="120" VerticalAlignment="Center" />
+                                    <TextBox x:Name="PollIntervalBox" Grid.Column="1" Width="116" MaxLength="4" PlaceholderText="秒" HorizontalAlignment="Right" VerticalAlignment="Center" />
                                 </Grid>
 
-                                <Rectangle Style="{StaticResource DividerStyle}" />
+                                <Rectangle Grid.Row="5" Style="{StaticResource DividerStyle}" />
 
-                                <Grid Style="{StaticResource SettingsRowStyle}">
+                                <Grid Grid.Row="6" Style="{StaticResource SettingsRowStyle}">
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="1*" MinWidth="180" MaxWidth="360" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,24,0">
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,28,0">
                                         <TextBlock Text="病毒关键词" Style="{StaticResource RowTitleStyle}" />
-                                        <TextBlock Text="火绒隔离库记录一律视为威胁；关键词仅用于自定义日志库" Style="{StaticResource RowDescriptionStyle}" />
+                                        <TextBlock Text="自定义日志库使用，多个关键词请用英文逗号分隔" Style="{StaticResource RowDescriptionStyle}" />
                                     </StackPanel>
-                                    <TextBox x:Name="KeywordsBox" Grid.Column="1" Width="280" VerticalAlignment="Center" />
+                                    <TextBox x:Name="KeywordsBox" Grid.Column="1" HorizontalAlignment="Stretch" PlaceholderText="例如：Trojan, Malware" VerticalAlignment="Center" />
                                 </Grid>
-                            </StackPanel>
+                            </Grid>
                         </Border>
 
-                        <TextBlock Text="火绒" Style="{StaticResource SectionHeaderStyle}" />
+                        <TextBlock Text="火绒日志" Style="{StaticResource SectionHeaderStyle}" />
                         <Border Style="{StaticResource SettingsCardStyle}">
-                            <StackPanel>
-                                <Grid Style="{StaticResource SettingsRowStyle}">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="Auto" />
-                                    </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,24,0">
-                                        <TextBlock Text="火绒日志路径" Style="{StaticResource RowTitleStyle}" />
-                                        <TextBlock x:Name="LogPathText" Style="{StaticResource RowDescriptionStyle}"
-                                                   FontFamily="Consolas" TextWrapping="Wrap" />
+                            <Grid Style="{StaticResource SettingsRowStyle}">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,28,0">
+                                    <TextBlock Text="日志数据库路径" Style="{StaticResource RowTitleStyle}" />
+                                    <TextBlock x:Name="LogPathText" Style="{StaticResource RowDescriptionStyle}" FontFamily="Consolas" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button x:Name="BrowseButton" Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center" Click="OnBrowseClicked">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xE8E5;" />
+                                        <TextBlock Text="选择文件" />
                                     </StackPanel>
-                                    <Button x:Name="BrowseButton" Grid.Column="1" Content="选择文件"
-                                            VerticalAlignment="Center" Click="OnBrowseClicked" />
-                                </Grid>
-                            </StackPanel>
+                                </Button>
+                            </Grid>
                         </Border>
                     </StackPanel>
 
-                    <!-- ========================= 测试与保存 ========================= -->
-                    <StackPanel x:Name="ActionsPage" Spacing="10" Visibility="Collapsed">
+                    <StackPanel x:Name="ActionsPage" Spacing="12" Visibility="Collapsed">
                         <TextBlock Text="操作" Style="{StaticResource SectionHeaderStyle}" />
                         <Border Style="{StaticResource SettingsCardStyle}">
                             <StackPanel>
@@ -137,11 +199,16 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,24,0">
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,28,0">
                                         <TextBlock Text="测试红屏" Style="{StaticResource RowTitleStyle}" />
                                         <TextBlock Text="立即模拟一次检测，验证红屏效果" Style="{StaticResource RowDescriptionStyle}" />
                                     </StackPanel>
-                                    <Button Grid.Column="1" Content="测试" VerticalAlignment="Center" Click="OnTestClicked" />
+                                    <Button Grid.Column="1" HorizontalAlignment="Right" VerticalAlignment="Center" Click="OnTestClicked">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE768;" />
+                                            <TextBlock Text="开始测试" />
+                                        </StackPanel>
+                                    </Button>
                                 </Grid>
 
                                 <Rectangle Style="{StaticResource DividerStyle}" />
@@ -151,30 +218,88 @@
                                         <ColumnDefinition Width="*" />
                                         <ColumnDefinition Width="Auto" />
                                     </Grid.ColumnDefinitions>
-                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,24,0">
+                                    <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="0,0,28,0">
                                         <TextBlock Text="保存设置" Style="{StaticResource RowTitleStyle}" />
-                                        <TextBlock Text="将当前设置写入 config.json" Style="{StaticResource RowDescriptionStyle}" />
+                                        <TextBlock Text="将当前设置写入配置文件并立即应用" Style="{StaticResource RowDescriptionStyle}" />
                                     </StackPanel>
-                                    <Button Grid.Column="1" Content="保存设置" Style="{StaticResource AccentButtonStyle}"
-                                            VerticalAlignment="Center" Click="OnSaveClicked" />
+                                    <Button Grid.Column="1" HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}" VerticalAlignment="Center" Click="OnSaveClicked">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE74E;" />
+                                            <TextBlock Text="保存设置" />
+                                        </StackPanel>
+                                    </Button>
                                 </Grid>
                             </StackPanel>
                         </Border>
                     </StackPanel>
 
-                    <!-- ========================== 使用说明 ========================== -->
-                    <StackPanel x:Name="AboutPage" Spacing="10" Visibility="Collapsed">
-                        <TextBlock Text="说明" Style="{StaticResource SectionHeaderStyle}" />
+                    <StackPanel x:Name="HelpPage" Spacing="12" Visibility="Collapsed">
+                        <TextBlock Text="使用说明" Style="{StaticResource SectionHeaderStyle}" />
+
+                        <TextBlock Text="程序流程" Style="{StaticResource SectionHeaderStyle}" />
                         <Border Style="{StaticResource SettingsCardStyle}">
-                            <TextBlock Padding="0,8,0,8" TextWrapping="Wrap" LineHeight="22">
-                                本程序为娱乐 / 演示用途，仅模拟 ACE 反作弊红屏效果，并非真实反作弊系统，也不会与任何游戏交互。<LineBreak /><LineBreak />
-                                红屏弹出后不会自动关闭，需点击「继续」按钮或按 Esc 才会退出。<LineBreak /><LineBreak />
-                                右键点击系统托盘图标，可选择「打开」管理界面或「退出」程序。<LineBreak /><LineBreak />
-                                修改「轮询间隔」与「病毒关键词」后，需要点击「保存设置」写入 config.json 才会长期生效。<LineBreak /><LineBreak />
-                                启动前已存在的检测记录不会弹窗；同一个威胁在三分钟内只提示一次，避免重复打扰。</TextBlock>
+                            <StackPanel Spacing="6" HorizontalAlignment="Stretch">
+                                <Border Style="{StaticResource FlowNodeStyle}">
+                                    <TextBlock Text="启动程序" Style="{StaticResource BodyTextStyle}" HorizontalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="↓" Style="{StaticResource FlowArrowStyle}" />
+                                <Border Style="{StaticResource FlowNodeStyle}">
+                                    <TextBlock Text="注册托盘与通知身份" Style="{StaticResource BodyTextStyle}" HorizontalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="↓" Style="{StaticResource FlowArrowStyle}" />
+                                <Border Style="{StaticResource FlowNodeStyle}">
+                                    <TextBlock Text="读取配置并打开日志数据库" Style="{StaticResource BodyTextStyle}" HorizontalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="↓" Style="{StaticResource FlowArrowStyle}" />
+                                <Border Style="{StaticResource FlowNodeStyle}">
+                                    <TextBlock Text="启动监控，按轮询间隔检查日志" Style="{StaticResource BodyTextStyle}" HorizontalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="↓" Style="{StaticResource FlowArrowStyle}" />
+                                <Border Style="{StaticResource FlowNodeStyle}">
+                                    <TextBlock Text="检测到威胁？" Style="{StaticResource BodyTextStyle}" HorizontalAlignment="Center" />
+                                </Border>
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <Border Grid.Column="0" Style="{StaticResource FlowNodeStyle}" MinWidth="0">
+                                        <TextBlock Text="否：等待下一轮轮询" Style="{StaticResource RowDescriptionStyle}" HorizontalAlignment="Center" TextAlignment="Center" />
+                                    </Border>
+                                    <Border Grid.Column="1" Style="{StaticResource FlowNodeStyle}" MinWidth="0">
+                                        <TextBlock Text="是：弹出红屏并发送通知" Style="{StaticResource RowDescriptionStyle}" HorizontalAlignment="Center" TextAlignment="Center" />
+                                    </Border>
+                                </Grid>
+                                <TextBlock Text="↓" Style="{StaticResource FlowArrowStyle}" />
+                                <Border Style="{StaticResource FlowNodeStyle}">
+                                    <TextBlock Text="托盘打开设置、保存配置或退出程序" Style="{StaticResource BodyTextStyle}" HorizontalAlignment="Center" TextWrapping="Wrap" />
+                                </Border>
+                            </StackPanel>
                         </Border>
                     </StackPanel>
 
+                    <StackPanel x:Name="AboutPage" Spacing="12" Visibility="Collapsed">
+                        <TextBlock Text="关于" Style="{StaticResource SectionHeaderStyle}" />
+                        <Border Style="{StaticResource SettingsCardStyle}">
+                            <StackPanel Spacing="12">
+                                <TextBlock Text="火绒ACE" Style="{StaticResource PageTitleStyle}" FontSize="22" />
+                                <TextBlock
+                                    Text="本项目基于 MIT License 开源，欢迎查看源码、提交问题和改进建议。"
+                                    Style="{StaticResource BodyTextStyle}"
+                                    TextWrapping="Wrap" />
+                                <StackPanel Spacing="4">
+                                    <TextBlock Text="项目仓库" Style="{StaticResource RowTitleStyle}" />
+                                    <HyperlinkButton
+                                        Content="github.com/FIOIU8/Huorong-ACE"
+                                        NavigateUri="https://github.com/FIOIU8/Huorong-ACE"
+                                        HorizontalAlignment="Left" />
+                                </StackPanel>
+                                <TextBlock
+                                    Text="许可证：MIT License"
+                                    Style="{StaticResource RowDescriptionStyle}" />
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
                 </StackPanel>
             </ScrollViewer>
         </NavigationView>

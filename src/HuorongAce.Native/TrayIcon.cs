@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using HuorongAce.Native.Win32;
 
 namespace HuorongAce.Native;
@@ -31,10 +32,12 @@ public sealed class TrayIcon : IDisposable
     private const uint WmRButtonUp = 0x0205;
 
     private readonly string _tooltip;
+    private readonly uint _taskbarCreatedMessage = NativeMethods.RegisterWindowMessageW("TaskbarCreated");
     private NativeWindowHost? _host;
     private nint _iconHandle;
     private bool _disposed;
     private volatile bool _added;
+    private volatile int _lastShellError;
 
     /// <summary>Raised when 打开 is chosen.</summary>
     public event EventHandler? OpenRequested;
@@ -53,9 +56,21 @@ public sealed class TrayIcon : IDisposable
             return;
         }
 
-        _iconHandle = ShieldIcon.Create(32);
+        _iconHandle = ShieldIcon.Create(TrayIconSize());
         _host = new NativeWindowHost(ClassName, CreateHostWindow, HandleMessage);
         _host.WaitUntilReady();
+    }
+
+    /// <summary>
+    /// The tray renders at the system small-icon size, which follows DPI
+    /// (16 at 100%, 32 at 200%). Rendering at that exact size avoids the blur
+    /// that comes from the shell downscaling a larger bitmap.
+    /// </summary>
+    private static int TrayIconSize()
+    {
+        const int SmCxSmIcon = 49;
+        var size = NativeMethods.GetSystemMetrics(SmCxSmIcon);
+        return size < 16 || size > 64 ? 32 : size;
     }
 
     /// <summary>
@@ -68,6 +83,15 @@ public sealed class TrayIcon : IDisposable
     /// makes that failure observable (and testable).
     /// </remarks>
     internal bool IsAdded => _added;
+
+    internal nint HostHandle => _host?.Handle ?? 0;
+
+    internal nint IconHandle => _iconHandle;
+
+    internal int LastShellError => _lastShellError;
+
+    /// <summary>Whether the shell currently owns a visible tray entry.</summary>
+    public bool IsVisible => _added;
 
     private nint CreateHostWindow(nint instance)
     {
@@ -82,24 +106,61 @@ public sealed class TrayIcon : IDisposable
             return 0;
         }
 
-        var data = NotifyData(hwnd);
-        _added = NativeMethods.Shell_NotifyIconW(NativeMethods.NimAdd, ref data);
+        _added = TryAddIcon(hwnd);
         return hwnd;
     }
 
-    private NativeMethods.NotifyIconData NotifyData(nint hwnd) => new()
+    private bool TryAddIcon(nint hwnd)
     {
-        CbSize = (uint)Marshal.SizeOf<NativeMethods.NotifyIconData>(),
+        foreach (var size in new[] { (uint)Marshal.SizeOf<NativeMethods.NotifyIconData>(), 296u, 168u })
+        {
+            var data = NotifyData(hwnd, size);
+            if (NativeMethods.Shell_NotifyIconW(NativeMethods.NimAdd, ref data))
+            {
+                return true;
+            }
+
+            _lastShellError = Marshal.GetLastWin32Error();
+            Thread.Sleep(75);
+        }
+
+        Debug.WriteLine("[tray] Shell_NotifyIcon(NIM_ADD) failed after three attempts.");
+        return false;
+    }
+
+    private void ReAddIcon(nint hwnd)
+    {
+        if (_disposed || hwnd == 0)
+        {
+            return;
+        }
+
+        var delete = NotifyData(hwnd, (uint)Marshal.SizeOf<NativeMethods.NotifyIconData>());
+        NativeMethods.Shell_NotifyIconW(NativeMethods.NimDelete, ref delete);
+        _added = TryAddIcon(hwnd);
+    }
+
+    private NativeMethods.NotifyIconData NotifyData(nint hwnd, uint size) => new()
+    {
+        CbSize = size,
         Hwnd = hwnd,
         Id = IconId,
         Flags = NativeMethods.NifMessage | NativeMethods.NifIcon | NativeMethods.NifTip,
         CallbackMessage = NativeMethods.WmTrayIcon,
         Icon = _iconHandle,
         Tip = _tooltip,
+        Info = string.Empty,
+        InfoTitle = string.Empty,
     };
 
     private nint? HandleMessage(nint hwnd, uint message, nint wParam, nint lParam)
     {
+        if (_taskbarCreatedMessage != 0 && message == _taskbarCreatedMessage)
+        {
+            ReAddIcon(hwnd);
+            return 0;
+        }
+
         if (message != NativeMethods.WmTrayIcon)
         {
             return null;
@@ -170,7 +231,7 @@ public sealed class TrayIcon : IDisposable
             var hwnd = _host.Handle;
             if (hwnd != 0)
             {
-                var data = NotifyData(hwnd);
+                var data = NotifyData(hwnd, (uint)Marshal.SizeOf<NativeMethods.NotifyIconData>());
                 NativeMethods.Shell_NotifyIconW(NativeMethods.NimDelete, ref data);
             }
 

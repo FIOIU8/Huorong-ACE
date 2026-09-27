@@ -32,6 +32,7 @@ public partial class App : Application
     private ThreatMonitor _monitor = null!;
     private TrayIcon _tray = null!;
     private SettingsWindow? _settingsWindow;
+    private int _shutdownStarted;
 
     public App()
     {
@@ -50,9 +51,43 @@ public partial class App : Application
         _tray.ExitRequested += OnTrayExitRequested;
         _tray.Show();
 
+        // Keep the process usable even when Explorer rejects the tray entry.
+        if (!_tray.IsVisible)
+        {
+            ShowSettingsWindow();
+        }
+
         _monitor.Start();
 
-        Notify("火绒ACE 已启动", "正在监控火绒日志，右键托盘图标可打开管理界面或退出。");
+        AnnounceStartup();
+
+        if (Environment.GetCommandLineArgs().Contains("--open-settings", StringComparer.OrdinalIgnoreCase))
+        {
+            ShowSettingsWindow();
+        }
+    }
+
+    /// <summary>
+    /// Raises the start-up notification, waiting a moment on the very first run.
+    /// </summary>
+    /// <remarks>
+    /// The first run also creates the Start-menu shortcut that gives the app its
+    /// notification identity. The shell resolves an AppUserModelID through an
+    /// index it refreshes asynchronously, so a toast sent in that same instant
+    /// is silently dropped. Two seconds is enough for the index to catch up,
+    /// and it only ever costs that once.
+    /// </remarks>
+    private async void AnnounceStartup()
+    {
+        const string title = "火绒ACE 已启动";
+        const string content = "正在监控火绒日志，右键托盘图标可打开管理界面或退出。";
+
+        if (SystemToast.WarmUp())
+        {
+            await Task.Delay(TimeSpan.FromSeconds(2));
+        }
+
+        Notify(title, content);
     }
 
     private void OnThreatDetected(object? sender, ThreatInfo threat)
@@ -66,29 +101,37 @@ public partial class App : Application
     {
         // Tray callbacks arrive on the tray thread, so hop to the UI thread
         // before touching any WinUI object.
-        _uiQueue.TryEnqueue(() =>
-        {
-            if (_settingsWindow is null)
-            {
-                var window = new SettingsWindow(_config, _monitor, _log);
-
-                // A WinUI window cannot be re-shown after it is closed, so drop
-                // the reference and build a fresh one next time.
-                window.Closed += (_, _) => _settingsWindow = null;
-                _settingsWindow = window;
-            }
-
-            _settingsWindow.Activate();
-        });
+        _uiQueue.TryEnqueue(ShowSettingsWindow);
     }
 
-    private async void OnTrayExitRequested(object? sender, EventArgs e)
+    /// <summary>Shows the settings window, creating it on first use.</summary>
+    private void ShowSettingsWindow()
     {
-        await ShutdownAsync();
+        if (_settingsWindow is null)
+        {
+            var window = new SettingsWindow(_config, _monitor, _log);
+
+            // A WinUI window cannot be re-shown after it is closed, so drop the
+            // reference and build a fresh one next time.
+            window.Closed += (_, _) => _settingsWindow = null;
+            _settingsWindow = window;
+        }
+
+        _settingsWindow.Activate();
+    }
+
+    private void OnTrayExitRequested(object? sender, EventArgs e)
+    {
+        _uiQueue.TryEnqueue(() => _ = ShutdownAsync());
     }
 
     private async Task ShutdownAsync()
     {
+        if (Interlocked.Exchange(ref _shutdownStarted, 1) != 0)
+        {
+            return;
+        }
+
         _monitor.SetEnabled(false);
 
         // Synchronous on purpose: the notification must be raised before the

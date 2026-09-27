@@ -2,6 +2,11 @@
 /Huorong-ACE.exe
 *.exe
 /tmp/
+/dist/
+*.zip
+*.7z
+*.tar
+*.gz
 
 # C# build output
 bin/
@@ -9,6 +14,7 @@ obj/
 .vs/
 *.user
 *.suo
+*.pdb
 
 # NuGet
 packages/
@@ -16,3 +22,37 @@ packages/
 
 # Local runtime config (generated at first run)
 config.json
+*.db
+*.db-shm
+*.db-wal
+
+# IDE and editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Operating system metadata
+.DS_Store
+Thumbs.db
+
+# AI agent workspaces and local agent state
+.agents/
+.codex/
+.workbuddy/
+.claude/
+.cursor/
+.windsurf/
+.continue/
+.aider*
+
+# Patch and crash leftovers
+*.patch
+*.diff
+*.rej
+*.orig
+*.stackdump
+
+# Local publish staging and restricted-machine CLI state
+.publish/
+.dotnet-home/

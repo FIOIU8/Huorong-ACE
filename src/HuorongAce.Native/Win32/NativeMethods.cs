@@ -147,18 +147,7 @@ internal static partial class NativeMethods
         public nint IconSmall;
     }
 
-    /// <summary>
-    /// <c>NOTIFYICONDATAW</c>, version 1 — the fields up to and including
-    /// <c>szTip</c>.
-    /// </summary>
-    /// <remarks>
-    /// This is deliberately the V1 layout. <c>Shell_NotifyIcon</c> only accepts
-    /// a handful of exact <c>cbSize</c> values (V1/V2/V3/V4), and a struct that
-    /// stops in the middle — say after <c>dwInfoFlags</c> — produces a size
-    /// that matches none of them, which makes the call fail silently and leaves
-    /// the tray icon missing. V1 is the oldest and always accepted, and it is
-    /// all this app needs: message callback, icon and tooltip.
-    /// </remarks>
+    /// <summary><c>NOTIFYICONDATAW</c> layout accepted by the modern shell.</summary>
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     public struct NotifyIconData
     {
@@ -169,6 +158,14 @@ internal static partial class NativeMethods
         public uint CallbackMessage;
         public nint Icon;
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)] public string Tip;
+        public uint State;
+        public uint StateMask;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)] public string Info;
+        public uint VersionOrTimeout;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)] public string InfoTitle;
+        public uint InfoFlags;
+        public Guid GuidItem;
+        public nint BalloonIcon;
     }
 
     public delegate nint WindowProc(nint hwnd, uint message, nint wParam, nint lParam);
@@ -186,6 +183,9 @@ internal static partial class NativeMethods
     // ---------------------------------------------------------------------
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern ushort RegisterClassExW(ref WndClassEx windowClass);
+
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    public static extern uint RegisterWindowMessageW(string message);
 
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     public static extern nint CreateWindowExW(
@@ -277,7 +277,7 @@ internal static partial class NativeMethods
     // ---------------------------------------------------------------------
     // shell32.dll
     // ---------------------------------------------------------------------
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    [DllImport("shell32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool Shell_NotifyIconW(uint command, ref NotifyIconData data);
 
@@ -320,6 +320,14 @@ internal static partial class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DestroyIcon(nint icon);
 
+    /// <summary>
+    /// Clips a window to a region, which is how a non-rectangular window is
+    /// made. The system owns the region after a successful call — do not delete
+    /// the handle passed in.
+    /// </summary>
+    [DllImport("user32.dll")]
+    public static extern int SetWindowRgn(nint hwnd, nint region, [MarshalAs(UnmanagedType.Bool)] bool redraw);
+
     // ---------------------------------------------------------------------
     // gdi32.dll
     // ---------------------------------------------------------------------
@@ -337,6 +345,14 @@ internal static partial class NativeMethods
         uint rasterOperation);
 
     public const uint SrcCopy = 0x00CC0020;
+
+    [DllImport("gdi32.dll")]
+    public static extern nint CreateRoundRectRgn(
+        int left, int top, int right, int bottom, int width, int height);
+
+    [DllImport("gdi32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool DeleteObject(nint handle);
 
     /// <summary>Decomposes an LPARAM into signed client coordinates.</summary>
     public static (int X, int Y) DecodePoint(nint lParam)

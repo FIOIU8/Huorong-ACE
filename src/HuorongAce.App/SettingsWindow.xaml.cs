@@ -2,10 +2,14 @@ using System.Globalization;
 using HuorongAce.Core.Configuration;
 using HuorongAce.Core.Diagnostics;
 using HuorongAce.Core.Monitoring;
+using HuorongAce.Native.Win32;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Controls.Primitives;
+using Microsoft.UI.Xaml.Input;
+using Microsoft.UI.Xaml.Media;
 using Windows.Graphics;
 using WinRT.Interop;
 
@@ -32,15 +36,17 @@ namespace HuorongAce.App;
 /// </remarks>
 public sealed partial class SettingsWindow : Window
 {
-    private const int WindowWidth = 900;
-    private const int WindowHeight = 520;
+    private const int WindowWidth = 1040;
+    private const int WindowHeight = 660;
 
     private readonly AppConfig _config;
     private readonly ThreatMonitor _monitor;
     private readonly IAppLog _log;
     private readonly DispatcherTimer _statusTimer;
+    private AppWindow? _appWindow;
 
     private string _lastStatusMessage = string.Empty;
+    private bool _isLoading;
 
     public SettingsWindow(AppConfig config, ThreatMonitor monitor, IAppLog log)
     {
@@ -50,17 +56,23 @@ public sealed partial class SettingsWindow : Window
 
         InitializeComponent();
 
+        ExtendsContentIntoTitleBar = true;
+        SetTitleBar(AppTitleBar);
+
         Title = "火绒ACE";
         ConfigureWindow();
 
+        _isLoading = true;
         Navigation.SelectedItem = NavMonitor;
 
         EnabledSwitch.IsOn = monitor.IsEnabled;
+        StartupSwitch.IsOn = StartupManager.IsEnabled();
         PollIntervalBox.Text = config.PollIntervalSeconds.ToString(CultureInfo.InvariantCulture);
         KeywordsBox.Text = string.Join(", ", config.Keywords);
         LogPathText.Text = config.LogPath;
+        _isLoading = false;
 
-        monitor.StateChanged += (_, _) => DispatcherQueue.TryEnqueue(RefreshStatus);
+        monitor.StateChanged += OnMonitorStateChanged;
         RefreshStatus();
 
         _statusTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -73,6 +85,9 @@ public sealed partial class SettingsWindow : Window
     private void ConfigureWindow()
     {
         var appWindow = GetAppWindow();
+        _appWindow = appWindow;
+        appWindow.Closing += OnAppWindowClosing;
+        ConfigureTitleBar(appWindow);
         appWindow.Resize(new SizeInt32(WindowWidth, WindowHeight));
 
         // Centre on the display that contains the window.
@@ -80,7 +95,48 @@ public sealed partial class SettingsWindow : Window
         var x = area.WorkArea.X + (area.WorkArea.Width - WindowWidth) / 2;
         var y = area.WorkArea.Y + (area.WorkArea.Height - WindowHeight) / 2;
         appWindow.Move(new PointInt32(x, y));
+
+        TrySetWindowIcon(appWindow);
     }
+
+    private void OnAppWindowClosing(AppWindow sender, AppWindowClosingEventArgs args)
+    {
+        args.Cancel = true;
+        sender.Hide();
+    }
+
+    private void ConfigureTitleBar(AppWindow appWindow)
+    {
+        var titleBar = appWindow.TitleBar;
+        titleBar.ExtendsContentIntoTitleBar = true;
+        titleBar.PreferredHeightOption = TitleBarHeightOption.Standard;
+        titleBar.IconShowOptions = IconShowOptions.HideIconAndSystemMenu;
+        titleBar.BackgroundColor = Colors.Transparent;
+        titleBar.InactiveBackgroundColor = Colors.Transparent;
+        titleBar.ButtonBackgroundColor = Colors.Transparent;
+        titleBar.ButtonInactiveBackgroundColor = Colors.Transparent;
+
+        var theme = (Content as FrameworkElement)?.ActualTheme ?? ElementTheme.Default;
+        var foreground = theme == ElementTheme.Light ? Colors.Black : Colors.White;
+        titleBar.ButtonForegroundColor = foreground;
+        titleBar.ButtonInactiveForegroundColor = foreground;
+        titleBar.ButtonHoverForegroundColor = foreground;
+        titleBar.ButtonPressedForegroundColor = foreground;
+        titleBar.ButtonHoverBackgroundColor = ColorHelper.FromArgb(0x18, foreground.R, foreground.G, foreground.B);
+        titleBar.ButtonPressedBackgroundColor = ColorHelper.FromArgb(0x28, foreground.R, foreground.G, foreground.B);
+    }
+
+    private static void TrySetWindowIcon(AppWindow appWindow)
+    {
+        // WinUI takes the icon from a .ico file, so the vector shield has to be
+        // rasterised once into one.
+        var target = Path.Combine(Path.GetTempPath(), "huorong-ace-icon.ico");
+        if (ShieldIcon.TryWriteIcoFile(target))
+        {
+            appWindow.SetIcon(target);
+        }
+    }
+
 
     private AppWindow GetAppWindow()
     {
@@ -146,6 +202,7 @@ public sealed partial class SettingsWindow : Window
         var tag = item.Tag as string;
         MonitorPage.Visibility = tag == "Monitor" ? Visibility.Visible : Visibility.Collapsed;
         ActionsPage.Visibility = tag == "Actions" ? Visibility.Visible : Visibility.Collapsed;
+        HelpPage.Visibility = tag == "Help" ? Visibility.Visible : Visibility.Collapsed;
         AboutPage.Visibility = tag == "About" ? Visibility.Visible : Visibility.Collapsed;
     }
 
@@ -157,7 +214,7 @@ public sealed partial class SettingsWindow : Window
     {
         var filter = sender.Text?.Trim() ?? string.Empty;
 
-        foreach (var item in new[] { NavMonitor, NavActions, NavAbout })
+        foreach (var item in new[] { NavMonitor, NavActions, NavHelp, NavAbout })
         {
             var label = item.Content as string ?? string.Empty;
             item.Visibility = filter.Length == 0 ||
@@ -167,15 +224,68 @@ public sealed partial class SettingsWindow : Window
         }
     }
 
+    private void OnRootPointerPressed(object sender, PointerRoutedEventArgs args)
+    {
+        if (IsInteractiveSource(args.OriginalSource as DependencyObject))
+        {
+            return;
+        }
+
+        RootLayout.Focus(FocusState.Pointer);
+    }
+
+    private static bool IsInteractiveSource(DependencyObject? source)
+    {
+        while (source is not null)
+        {
+            if (source is TextBox ||
+                source is AutoSuggestBox ||
+                source is ButtonBase ||
+                source is ToggleSwitch ||
+                source is NavigationViewItem)
+            {
+                return true;
+            }
+
+            source = VisualTreeHelper.GetParent(source);
+        }
+
+        return false;
+    }
+
     // ---------------------------------------------------------------------
     // Actions
     // ---------------------------------------------------------------------
 
     private void OnEnabledToggled(object sender, RoutedEventArgs e)
     {
+        _config.MonitorEnabled = EnabledSwitch.IsOn;
         _monitor.SetEnabled(EnabledSwitch.IsOn);
         RefreshStatus();
     }
+
+    private async void OnStartupToggled(object sender, RoutedEventArgs e)
+    {
+        if (_isLoading)
+        {
+            return;
+        }
+
+        var requested = StartupSwitch.IsOn;
+        if (StartupManager.TrySetEnabled(requested))
+        {
+            return;
+        }
+
+        _isLoading = true;
+        StartupSwitch.IsOn = !requested;
+        _isLoading = false;
+        _log.Info("无法更新 Windows 开机启动项。");
+        await ShowDialogAsync("无法更新开机启动", "当前用户启动项写入失败，请检查系统权限后重试。");
+    }
+
+    private void OnMonitorStateChanged(object? sender, EventArgs e) =>
+        DispatcherQueue.TryEnqueue(RefreshStatus);
 
     private async void OnBrowseClicked(object sender, RoutedEventArgs e)
     {
@@ -185,16 +295,18 @@ public sealed partial class SettingsWindow : Window
             return;
         }
 
+        var previousPath = _config.LogPath;
         _config.LogPath = path;
-        LogPathText.Text = path;
 
         // Re-open at once so the new path takes effect without a restart.
         if (!await _monitor.ReloadAsync(path))
         {
+            _config.LogPath = previousPath;
             await ShowDialogAsync("无法打开该数据库", path);
             return;
         }
 
+        LogPathText.Text = path;
         RefreshStatus();
     }
 
@@ -205,15 +317,27 @@ public sealed partial class SettingsWindow : Window
 
     private async void OnSaveClicked(object sender, RoutedEventArgs e)
     {
-        if (int.TryParse(PollIntervalBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var interval)
-            && interval >= 1)
+        if (!int.TryParse(PollIntervalBox.Text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var interval)
+            || interval < 1)
         {
-            _config.PollIntervalSeconds = interval;
+            await ShowDialogAsync("输入无效", "轮询间隔必须是大于或等于 1 的整数。" );
+            PollIntervalBox.Focus(FocusState.Programmatic);
+            return;
         }
 
-        _config.Keywords = KeywordsBox.Text
+        var keywords = KeywordsBox.Text
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .ToList();
+        if (keywords.Count == 0)
+        {
+            await ShowDialogAsync("输入无效", "至少需要保留一个关键词。" );
+            KeywordsBox.Focus(FocusState.Programmatic);
+            return;
+        }
+
+        _config.PollIntervalSeconds = interval;
+        _config.Keywords = keywords;
+        _config.MonitorEnabled = EnabledSwitch.IsOn;
 
         try
         {
@@ -227,9 +351,12 @@ public sealed partial class SettingsWindow : Window
         }
 
         // Apply the possibly changed path without needing a restart.
-        await _monitor.ReloadAsync(_config.LogPath);
+        if (!await _monitor.ReloadAsync(_config.LogPath))
+        {
+            await ShowDialogAsync("日志库不可用", "设置已保存，但当前日志路径无法打开。" );
+        }
         RefreshStatus();
-        await ShowDialogAsync("已保存", "设置已写入 config.json");
+        await ShowDialogAsync("已保存", $"设置已写入{Environment.NewLine}{AppConfig.ConfigFilePath}");
     }
 
     private async Task<string?> PickDatabaseFileAsync()
@@ -263,6 +390,12 @@ public sealed partial class SettingsWindow : Window
     private void OnClosed(object sender, WindowEventArgs args)
     {
         _statusTimer.Stop();
+        _monitor.StateChanged -= OnMonitorStateChanged;
+        if (_appWindow is not null)
+        {
+            _appWindow.Closing -= OnAppWindowClosing;
+            _appWindow = null;
+        }
         Closed -= OnClosed;
     }
 }

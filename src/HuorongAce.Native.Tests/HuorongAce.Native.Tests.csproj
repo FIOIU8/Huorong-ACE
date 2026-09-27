@@ -1,8 +1,9 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- Matches HuorongAce.Native: the code under test is Win32-only. -->
-    <TargetFramework>net8.0-windows</TargetFramework>
+    <!-- Matches HuorongAce.Native: the code under test is Win32-only, and the
+         referenced project now targets an explicit Windows SDK version. -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
     <RootNamespace>HuorongAce.Native.Tests</RootNamespace>
     <AssemblyName>HuorongAce.Native.Tests</AssemblyName>
     <LangVersion>latest</LangVersion>

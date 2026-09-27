@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.x
+
+      - name: Locate Visual Studio Appx tools
+        shell: pwsh
+        run: |
+          $vsRoot = Get-ChildItem "$env:ProgramFiles\Microsoft Visual Studio\2022" -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path (Join-Path $_.FullName 'MSBuild\Microsoft\VisualStudio\v17.0\AppxPackage') } |
+            Select-Object -First 1
+
+          if ($null -eq $vsRoot) {
+            throw 'Visual Studio Appx/PRI MSBuild tools were not found on the runner.'
+          }
+
+          "VS_BUILDTOOLS_PATH=$($vsRoot.FullName)" >> $env:GITHUB_ENV
+
+      - name: Restore
+        run: dotnet restore HuorongAce.sln
+
+      - name: Build
+        run: dotnet build HuorongAce.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test HuorongAce.sln --configuration Release --no-build --no-restore
