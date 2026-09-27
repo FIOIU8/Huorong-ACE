@@ -73,10 +73,20 @@ jobs:
             throw "Version '$env:RELEASE_VERSION' must match vMAJOR.MINOR.PATCH, for example v1.0.0."
           }
 
+          $PSNativeCommandUseErrorActionPreference = $false
           gh release view $env:RELEASE_VERSION --repo $env:GITHUB_REPOSITORY *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $viewExitCode = $LASTEXITCODE
+          if ($viewExitCode -eq 0) {
             throw "A release named '$env:RELEASE_VERSION' already exists."
           }
+          if ($viewExitCode -ne 1) {
+            throw "Could not check release '$env:RELEASE_VERSION'; gh exited with code $viewExitCode."
+          }
+
+          # gh returns 1 for the expected "release not found" case. Clear the
+          # native exit code so PowerShell does not fail the workflow step.
+          $global:LASTEXITCODE = 0
+          exit 0
 
       - name: Build Windows folder deployment
         shell: cmd
