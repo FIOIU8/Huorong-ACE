@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   draft-release:
-    runs-on: windows-latest
+    runs-on: windows-2022
     env:
       RELEASE_VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ github.token }}
@@ -34,15 +34,37 @@ jobs:
       - name: Locate Visual Studio Appx tools
         shell: pwsh
         run: |
-          $vsRoot = Get-ChildItem "$env:ProgramFiles\Microsoft Visual Studio\2022" -Directory -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path (Join-Path $_.FullName 'MSBuild\Microsoft\VisualStudio\v17.0\AppxPackage') } |
-            Select-Object -First 1
-
-          if ($null -eq $vsRoot) {
-            throw 'Visual Studio Appx/PRI MSBuild tools were not found on the runner.'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          if (-not (Test-Path $vswhere)) {
+            throw "vswhere.exe was not found: $vswhere"
           }
 
-          "VS_BUILDTOOLS_PATH=$($vsRoot.FullName)" >> $env:GITHUB_ENV
+          $vsRoot = & $vswhere -latest -prerelease -products * -requires Microsoft.Component.MSBuild -property installationPath |
+            Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($vsRoot)) {
+            throw 'A Visual Studio installation with MSBuild was not found on the runner.'
+          }
+
+          $appxPath = Join-Path $vsRoot 'MSBuild\Microsoft\VisualStudio\v17.0\AppxPackage'
+          $priTask = Join-Path $appxPath 'Microsoft.Build.Packaging.Pri.Tasks.dll'
+          if (-not (Test-Path $priTask)) {
+            $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\setup.exe'
+            if (-not (Test-Path $installer)) {
+              throw "Visual Studio Installer was not found: $installer"
+            }
+
+            Write-Host "Installing the Visual Studio UWP/Appx support component for $vsRoot"
+            & $installer modify --installPath $vsRoot --add Microsoft.VisualStudio.Component.UWP.Support --quiet --norestart
+            if ($LASTEXITCODE -ne 0) {
+              throw "Visual Studio UWP/Appx component installation failed with exit code $LASTEXITCODE."
+            }
+          }
+
+          if (-not (Test-Path $priTask)) {
+            throw "Visual Studio Appx/PRI task assembly was not found: $priTask"
+          }
+
+          "VS_BUILDTOOLS_PATH=$vsRoot" >> $env:GITHUB_ENV
 
       - name: Validate release version
         shell: pwsh
