@@ -1,0 +1,22 @@
+<Project>
+
+  <!--
+    WinUI 3 的 MSIX / PRI 资源索引构建任务（Microsoft.Build.AppxPackage.dll 与
+    Microsoft.Build.Packaging.Pri.Tasks.dll）由 Visual Studio 生成工具提供，
+    并不包含在 .NET SDK 里。MSBuild 默认到
+    $(MSBuildExtensionsPath)\Microsoft\VisualStudio\v17.0\AppxPackage\ 找它们，
+    也就是 .NET SDK 目录下 —— 生成工具装在自定义位置时那里是空的。
+
+    把 AppxMSBuildToolsPath 提前设好即可，WinAppSDK 的 targets 里该属性带
+    Condition="'$(AppxMSBuildToolsPath)' == ''"，我们设了就不会被覆盖。
+
+    用法（二选一）：
+      1. 设置环境变量 VS_BUILDTOOLS_PATH 指向生成工具安装目录；
+      2. 或者直接在命令行传 -p:AppxMSBuildToolsPath=<目录>\
+    生成工具装在默认位置时两者都不需要。
+  -->
+  <PropertyGroup>
+    <AppxMSBuildToolsPath Condition="'$(AppxMSBuildToolsPath)' == '' AND '$(VS_BUILDTOOLS_PATH)' != ''">$(VS_BUILDTOOLS_PATH)\MSBuild\Microsoft\VisualStudio\v17.0\AppxPackage\</AppxMSBuildToolsPath>
+  </PropertyGroup>
+
+</Project>

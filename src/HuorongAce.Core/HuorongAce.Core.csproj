@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>HuorongAce.Core</RootNamespace>
+    <AssemblyName>HuorongAce.Core</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.8" />
+  </ItemGroup>
+
+  <!-- Lets the test assembly reach the internal cursor-rewind hooks. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="HuorongAce.Core.Tests" />
+  </ItemGroup>
+
+</Project>

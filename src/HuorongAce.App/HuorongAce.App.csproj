@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <!-- WinUI 3 requires a Windows-specific TFM. 19041 is the minimum version
+         supported by the current Windows App SDK. -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>HuorongAce.App</RootNamespace>
+    <AssemblyName>HuorongAce</AssemblyName>
+    <Platforms>x64</Platforms>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <UseWinUI>true</UseWinUI>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- Deploy as a plain folder next to the exe (no MSIX, no installer),
+         matching how the Go build was shipped. Self-contained mode bundles the
+         Windows App SDK runtime so the target machine needs nothing extra. -->
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+
+    <!-- WinUI generates its own Program.Main into App.g.i.cs. We ship our own
+         hand-written entry point (Program.cs) for the unpackaged deployment, so
+         tell the XAML compiler to leave its generated Main out. -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250108002" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.174" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\HuorongAce.Core\HuorongAce.Core.csproj" />
+    <ProjectReference Include="..\HuorongAce.Native\HuorongAce.Native.csproj" />
+  </ItemGroup>
+
+</Project>
