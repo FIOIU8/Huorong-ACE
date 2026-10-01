@@ -101,7 +101,7 @@
 | --- | --- |
 | HuorongAce.Core | `Microsoft.Data.Sqlite` 8.0.8 |
 | HuorongAce.Native | `System.Drawing.Common` 8.0.8 |
-| HuorongAce.App | `Microsoft.WindowsAppSDK` 1.6.250108002、`Microsoft.Windows.SDK.BuildTools` 10.0.26100.174 |
+| HuorongAce.App | `Microsoft.WindowsAppSDK` 1.6.250108002、`Microsoft.Windows.SDK.BuildTools` 10.0.26100.1742 |
 | 测试（两个） | `Microsoft.NET.Test.Sdk` 17.11.1、`xunit` 2.9.2、`xunit.runner.visualstudio` 2.8.2 |
 
 ### 构建命令
