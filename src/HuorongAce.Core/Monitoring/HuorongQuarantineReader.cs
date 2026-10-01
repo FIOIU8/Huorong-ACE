@@ -16,9 +16,9 @@ namespace HuorongAce.Core.Monitoring;
 /// </para>
 /// <list type="bullet">
 ///   <item>
-///     It runs in WAL mode and is held open by the Huorong service, so it
-///     cannot be opened read-only in place. Every read therefore works on a
-///     copied snapshot that includes the <c>-wal</c> and <c>-shm</c> files.
+///     It runs in WAL mode and is held open by the Huorong service. Every read
+///     therefore works on a consistent SQLite backup snapshot rather than a
+///     hand-copied collection of database sidecar files.
 ///   </item>
 ///   <item>
 ///     A single incident produces several rows (one per scan / extraction).
@@ -63,6 +63,7 @@ public sealed class HuorongQuarantineReader : IDisposable
     {
         _databasePath = databasePath ?? throw new ArgumentNullException(nameof(databasePath));
         _config = config ?? throw new ArgumentNullException(nameof(config));
+        _config.Normalize();
         _log = log ?? new NullAppLog();
     }
 
@@ -143,7 +144,7 @@ public sealed class HuorongQuarantineReader : IDisposable
             var maxTimestamp = watermark;
 
             using var command = connection.CreateCommand();
-            command.CommandText = $"SELECT rowid, * FROM \"{table}\" WHERE rowid > $cursor ORDER BY rowid ASC";
+            command.CommandText = $"SELECT rowid, * FROM {QuoteIdentifier(table)} WHERE rowid > $cursor ORDER BY rowid ASC";
             command.Parameters.AddWithValue("$cursor", cursorRowId);
 
             using var reader = command.ExecuteReader();
@@ -329,7 +330,7 @@ public sealed class HuorongQuarantineReader : IDisposable
     {
         var columns = new List<string>();
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT name FROM pragma_table_info(\"{table}\")";
+        command.CommandText = $"SELECT name FROM pragma_table_info({QuoteIdentifier(table)})";
         using var reader = command.ExecuteReader();
         while (reader.Read())
         {
@@ -342,7 +343,7 @@ public sealed class HuorongQuarantineReader : IDisposable
     private static long QueryMaxRowId(SqliteConnection connection, string table)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT MAX(rowid) FROM \"{table}\"";
+        command.CommandText = $"SELECT MAX(rowid) FROM {QuoteIdentifier(table)}";
         var value = command.ExecuteScalar();
         return value is null or DBNull ? 0 : Convert.ToInt64(value, CultureInfo.InvariantCulture);
     }
@@ -360,7 +361,7 @@ public sealed class HuorongQuarantineReader : IDisposable
         }
 
         using var command = connection.CreateCommand();
-        command.CommandText = $"SELECT MAX(\"ts\") FROM \"{table}\"";
+        command.CommandText = $"SELECT MAX(\"ts\") FROM {QuoteIdentifier(table)}";
         var value = command.ExecuteScalar();
         return value is null or DBNull ? 0 : Convert.ToInt64(value, CultureInfo.InvariantCulture);
     }
@@ -434,33 +435,135 @@ public sealed class HuorongQuarantineReader : IDisposable
             var directory = Directory.CreateTempSubdirectory("huorong-ace-snap-");
             var target = Path.Combine(directory.FullName, "snap.db");
 
-            File.Copy(sourcePath, target, overwrite: true);
-            TryCopy(sourcePath + "-wal", target + "-wal");
-            TryCopy(sourcePath + "-shm", target + "-shm");
+            try
+            {
+                try
+                {
+                    // SQLite's backup API coordinates with the source
+                    // connection and produces a consistent view of the main
+                    // database and WAL.
+                    using var source = new SqliteConnection(
+                        new SqliteConnectionStringBuilder
+                        {
+                            DataSource = sourcePath,
+                            Mode = SqliteOpenMode.ReadOnly,
+                            Cache = SqliteCacheMode.Private,
+                            DefaultTimeout = 3,
+                            Pooling = false,
+                        }.ToString());
+                    source.Open();
+
+                    using var destination = new SqliteConnection(
+                        new SqliteConnectionStringBuilder
+                        {
+                            DataSource = target,
+                            Mode = SqliteOpenMode.ReadWriteCreate,
+                            Cache = SqliteCacheMode.Private,
+                            DefaultTimeout = 3,
+                            Pooling = false,
+                        }.ToString());
+                    destination.Open();
+                    source.BackupDatabase(destination);
+                }
+                catch (SqliteException)
+                {
+                    // Some Huorong versions deny a backup connection while
+                    // their service owns the WAL. Fall back to a verified
+                    // sidecar copy so those installations remain readable.
+                    CopyStableSnapshot(sourcePath, target);
+                }
+            }
+            catch
+            {
+                try
+                {
+                    Directory.Delete(directory.FullName, recursive: true);
+                }
+                catch (IOException)
+                {
+                    // Preserve the original database error.
+                }
+
+                throw;
+            }
 
             return new DatabaseSnapshot(directory.FullName);
         }
 
-        public SqliteConnection OpenConnection()
+        private static void CopyStableSnapshot(string sourcePath, string targetPath)
         {
-            var connection = new SqliteConnection($"Data Source={Path.Combine(_directory, "snap.db")};Default Timeout=3");
-            connection.Open();
-            return connection;
+            const int attempts = 3;
+            for (var attempt = 0; attempt < attempts; attempt++)
+            {
+                var before = CaptureFiles(sourcePath);
+                File.Copy(sourcePath, targetPath, overwrite: true);
+                CopyOptional(sourcePath + "-wal", targetPath + "-wal");
+                CopyOptional(sourcePath + "-shm", targetPath + "-shm");
+                var after = CaptureFiles(sourcePath);
+
+                if (before.SequenceEqual(after))
+                {
+                    return;
+                }
+
+                File.Delete(targetPath);
+                TryDelete(targetPath + "-wal");
+                TryDelete(targetPath + "-shm");
+                Thread.Sleep(25 * (attempt + 1));
+            }
+
+            throw new IOException("SQLite 数据库在复制期间持续变化，无法建立稳定快照。");
         }
 
-        private static void TryCopy(string source, string target)
+        private static (bool Exists, long Length, DateTime LastWriteUtc)[] CaptureFiles(string sourcePath) =>
+        [
+            CaptureFile(sourcePath),
+            CaptureFile(sourcePath + "-wal"),
+            CaptureFile(sourcePath + "-shm"),
+        ];
+
+        private static (bool Exists, long Length, DateTime LastWriteUtc) CaptureFile(string path)
         {
             try
             {
-                if (File.Exists(source))
-                {
-                    File.Copy(source, target, overwrite: true);
-                }
+                var info = new FileInfo(path);
+                return info.Exists
+                    ? (true, info.Length, info.LastWriteTimeUtc)
+                    : (false, 0, default);
             }
             catch (IOException)
             {
-                // Missing or locked side files simply mean slightly older data.
+                return (false, 0, default);
             }
+        }
+
+        private static void CopyOptional(string source, string target)
+        {
+            if (!File.Exists(source))
+            {
+                return;
+            }
+
+            File.Copy(source, target, overwrite: true);
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
+            {
+                File.Delete(path);
+            }
+            catch (IOException)
+            {
+                // Best effort cleanup before the next snapshot attempt.
+            }
+        }
+
+        public SqliteConnection OpenConnection()
+        {
+            var connection = new SqliteConnection($"Data Source={Path.Combine(_directory, "snap.db")};Default Timeout=3;Pooling=False");
+            connection.Open();
+            return connection;
         }
 
         public void Dispose()
@@ -475,6 +578,9 @@ public sealed class HuorongQuarantineReader : IDisposable
             }
         }
     }
+
+    private static string QuoteIdentifier(string identifier) =>
+        "\"" + identifier.Replace("\"", "\"\"", StringComparison.Ordinal) + "\"";
 }
 
 internal static class RowExtensions

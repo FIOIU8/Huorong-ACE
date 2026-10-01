@@ -1,5 +1,6 @@
 using HuorongAce.Core.Configuration;
 using HuorongAce.Core.Monitoring;
+using Microsoft.Data.Sqlite;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -80,5 +81,60 @@ public sealed class QuarantineReaderTests
 
         Assert.Equal("EICAR-Test-Signature", info.Name);
         Assert.NotEqual(default, info.Timestamp);
+    }
+
+    [Fact]
+    public void AppConfig_NormalizeRepairsMissingValues()
+    {
+        var config = new AppConfig
+        {
+            LogPath = null!,
+            PollIntervalSeconds = 0,
+            Keywords = null!,
+        };
+
+        config.Normalize();
+
+        Assert.Equal(AppConfig.QuarantineDatabasePath(), config.LogPath);
+        Assert.Equal(2, config.PollIntervalSeconds);
+        Assert.NotEmpty(config.Keywords);
+    }
+
+    [Fact]
+    public void Reader_HandlesQuotedTableNamesThroughSqliteBackup()
+    {
+        var directory = Directory.CreateTempSubdirectory("huorong-ace-test-");
+        var path = Path.Combine(directory.FullName, "quarantine.db");
+        try
+        {
+            using (var connection = new SqliteConnection($"Data Source={path};Pooling=False"))
+            {
+                connection.Open();
+                using var command = connection.CreateCommand();
+                command.CommandText = """
+                    PRAGMA journal_mode = WAL;
+                    CREATE TABLE "bad""name" (vn TEXT, fn TEXT, ts INTEGER);
+                    INSERT INTO "bad""name" (vn, fn, ts) VALUES ('Test/Threat', 'C:\sample.bin', 2000000000);
+                    """;
+                command.ExecuteNonQuery();
+            }
+
+            var config = new AppConfig { LogPath = path };
+            using var reader = new HuorongQuarantineReader(path, config);
+            reader.Open();
+            reader.RewindRowIdCursor();
+            reader.RewindTimeCursor();
+            reader.ClearDedupHistory();
+
+            var threats = reader.Poll();
+
+            var threat = Assert.Single(threats);
+            Assert.Equal("Test/Threat", threat.Name);
+            Assert.Contains("C:\\sample.bin", threat.Detail);
+        }
+        finally
+        {
+            Directory.Delete(directory.FullName, recursive: true);
+        }
     }
 }

@@ -15,6 +15,8 @@ namespace HuorongAce.Core.Configuration;
 /// </remarks>
 public sealed class AppConfig
 {
+    private const int DefaultPollIntervalSeconds = 2;
+    private const int MaxPollIntervalSeconds = 3600;
     /// <summary>Path used by earlier Go builds. It never existed on real Huorong installs.</summary>
     public const string LegacyLogPath = @"C:\ProgramData\Huorong\Sysdiag\log.db";
 
@@ -90,7 +92,12 @@ public sealed class AppConfig
             }
             catch (JsonException)
             {
-                break;
+                // A damaged sidecar should not prevent a valid per-user
+                // fallback from loading.
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // Try the per-user fallback when the sidecar is inaccessible.
             }
             catch (IOException)
             {
@@ -98,12 +105,14 @@ public sealed class AppConfig
             }
         }
 
+        config.Normalize();
         config.MigrateLegacyLogPath();
         return config;
     }
 
     public void Save()
     {
+        Normalize();
         var json = JsonSerializer.Serialize(this, SerializerOptions);
         var sidecar = Path.Combine(ExecutableDirectory(), "config.json");
         try
@@ -145,6 +154,38 @@ public sealed class AppConfig
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Repairs missing or out-of-range values after JSON deserialization and
+    /// before any consumer uses the settings.
+    /// </summary>
+    public void Normalize()
+    {
+        if (string.IsNullOrWhiteSpace(LogPath))
+        {
+            LogPath = QuarantineDatabasePath();
+        }
+        else
+        {
+            LogPath = LogPath.Trim();
+        }
+
+        PollIntervalSeconds = Math.Clamp(
+            PollIntervalSeconds <= 0 ? DefaultPollIntervalSeconds : PollIntervalSeconds,
+            1,
+            MaxPollIntervalSeconds);
+
+        Keywords = (Keywords ?? new List<string>())
+            .Where(keyword => !string.IsNullOrWhiteSpace(keyword))
+            .Select(keyword => keyword.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (Keywords.Count == 0)
+        {
+            Keywords = new List<string>(DefaultKeywords);
+        }
     }
 
     /// <summary>
