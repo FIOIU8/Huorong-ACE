@@ -17,6 +17,13 @@ if /I "%CONFIG%"=="single" (
 )
 if not defined CONFIG set "CONFIG=Release"
 
+set "CLEAN_RELEASE_ARTIFACTS=0"
+set "PUBLISH_SYMBOL_PROPERTIES="
+if /I "%CONFIG%"=="Release" (
+    set "CLEAN_RELEASE_ARTIFACTS=1"
+    set "PUBLISH_SYMBOL_PROPERTIES=-p:DebugSymbols=false -p:DebugType=None"
+)
+
 if not "%~2"=="" if /I not "%~2"=="folder" (
     echo ERROR: Only folder deployment is supported. Omit the second argument or use folder.
     goto :fail
@@ -91,7 +98,7 @@ if not exist "%STAGING_DIR%" (
 )
 
 echo Publishing folder deployment (%CONFIG% ^| %RID%)...
-dotnet publish "%ROOT%%APP_PROJECT%" --configuration "%CONFIG%" --runtime "%RID%" --self-contained true --property:Platform="%APP_PLATFORM%" -p:PublishTrimmed=false -p:PublishReadyToRun=false -p:EnableMsixTooling=true -o "%STAGING_DIR%"
+dotnet publish "%ROOT%%APP_PROJECT%" --configuration "%CONFIG%" --runtime "%RID%" --self-contained true --property:Platform="%APP_PLATFORM%" -p:PublishTrimmed=false -p:PublishReadyToRun=false %PUBLISH_SYMBOL_PROPERTIES% -p:EnableMsixTooling=true -o "%STAGING_DIR%"
 if errorlevel 1 (
     echo ERROR: Folder publish failed.
     goto :fail
@@ -121,6 +128,14 @@ if errorlevel 1 (
     echo ERROR: Could not prune unsupported language resources.
     goto :fail
 )
+
+if "%CLEAN_RELEASE_ARTIFACTS%"=="1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%ROOT%tools\Prune-ReleaseArtifacts.ps1" -Root "%DIST_DIR%"
+    if errorlevel 1 (
+        echo ERROR: Could not prune release diagnostic artifacts.
+        goto :fail
+    )
+)
 goto :verify
 
 :verify
@@ -136,6 +151,10 @@ if not exist "%DIST_DIR%\resources.pri" if not exist "%DIST_DIR%\HuorongAce.pri"
 )
 if not exist "%DIST_DIR%\App.xbf" (
     echo ERROR: Folder deployment is missing App.xbf.
+    goto :fail
+)
+if not exist "%DIST_DIR%\SettingsWindow.xbf" (
+    echo ERROR: Folder deployment is missing SettingsWindow.xbf.
     goto :fail
 )
 
