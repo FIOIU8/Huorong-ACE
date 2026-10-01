@@ -26,6 +26,7 @@ internal sealed class NativeWindowHost : IDisposable
     private NativeMethods.WindowProc? _windowProc; // kept alive: it is marshalled to a function pointer
     private volatile nint _handle;
     private volatile bool _stopped;
+    private int _disposeStarted;
 
     /// <summary>Window handle, valid once <see cref="WaitUntilReady"/> returns.</summary>
     public nint Handle => _handle;
@@ -55,36 +56,79 @@ internal sealed class NativeWindowHost : IDisposable
 
     private void MessageLoop()
     {
-        var instance = NativeMethods.GetModuleHandleW(null);
-
-        // Registering the class here (not on the caller's thread) keeps the
-        // window procedure and the message loop on the same thread.
-        var windowClass = new NativeMethods.WndClassEx
+        nint hwnd = 0;
+        nint instance = 0;
+        ushort classAtom = 0;
+        try
         {
-            CbSize = (uint)Marshal.SizeOf<NativeMethods.WndClassEx>(),
-            WndProc = Marshal.GetFunctionPointerForDelegate(_windowProc = Dispatch),
-            Instance = instance,
-            Cursor = NativeMethods.LoadCursorW(0, NativeMethods.IdcArrow),
-            ClassName = _className,
-        };
-        NativeMethods.RegisterClassExW(ref windowClass);
+            instance = NativeMethods.GetModuleHandleW(null);
 
-        var hwnd = _createWindow(instance);
-        _handle = hwnd;
-        _ready.Set();
+            // Registering the class here (not on the caller's thread) keeps the
+            // window procedure and the message loop on the same thread.
+            var windowClass = new NativeMethods.WndClassEx
+            {
+                CbSize = (uint)Marshal.SizeOf<NativeMethods.WndClassEx>(),
+                WndProc = Marshal.GetFunctionPointerForDelegate(_windowProc = Dispatch),
+                Instance = instance,
+                Cursor = NativeMethods.LoadCursorW(0, NativeMethods.IdcArrow),
+                ClassName = _className,
+            };
+            classAtom = NativeMethods.RegisterClassExW(ref windowClass);
+            if (classAtom == 0)
+            {
+                throw new InvalidOperationException(
+                    $"RegisterClassExW failed for {_className}: {Marshal.GetLastWin32Error()}");
+            }
 
-        if (hwnd == 0)
-        {
-            return;
+            hwnd = _createWindow(instance);
+            _handle = hwnd;
+            _ready.Set();
+
+            if (hwnd == 0)
+            {
+                return;
+            }
+
+            // Dispose may race with window creation. Destroy the window on its
+            // owning thread instead of leaving a hidden native window behind.
+            if (_stopped)
+            {
+                NativeMethods.DestroyWindow(hwnd);
+                return;
+            }
+
+            while (!_stopped && NativeMethods.GetMessageW(out var message, 0, 0, 0) > 0)
+            {
+                NativeMethods.TranslateMessage(ref message);
+                NativeMethods.DispatchMessageW(ref message);
+            }
         }
-
-        while (!_stopped && NativeMethods.GetMessageW(out var message, 0, 0, 0) > 0)
+        catch (Exception ex)
         {
-            NativeMethods.TranslateMessage(ref message);
-            NativeMethods.DispatchMessageW(ref message);
+            System.Diagnostics.Debug.WriteLine($"[native] message loop failure: {ex}");
         }
+        finally
+        {
+            if (hwnd != 0 && NativeMethods.IsWindow(hwnd))
+            {
+                NativeMethods.DestroyWindow(hwnd);
+            }
 
-        _handle = 0;
+            if (classAtom != 0)
+            {
+                if (!NativeMethods.UnregisterClassW(_className, instance))
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[native] UnregisterClassW failed for {_className}: {Marshal.GetLastWin32Error()}");
+                }
+            }
+
+            _handle = 0;
+            // Signal both successful creation and failures. Dispose waits for
+            // the thread before releasing this event, so Set cannot race with
+            // disposal.
+            _ready.Set();
+        }
     }
 
     private nint Dispatch(nint hwnd, uint message, nint wParam, nint lParam)
@@ -96,6 +140,18 @@ internal sealed class NativeWindowHost : IDisposable
             if (handled.HasValue)
             {
                 return handled.Value;
+            }
+
+            if (message == NativeMethods.WmClose)
+            {
+                NativeMethods.DestroyWindow(hwnd);
+                return 0;
+            }
+
+            if (message == NativeMethods.WmDestroy)
+            {
+                NativeMethods.PostQuitMessage(0);
+                return 0;
             }
         }
         catch (Exception ex)
@@ -128,8 +184,22 @@ internal sealed class NativeWindowHost : IDisposable
 
     public void Dispose()
     {
+        if (Interlocked.Exchange(ref _disposeStarted, 1) != 0)
+        {
+            return;
+        }
+
         _stopped = true;
         Stop();
-        _ready.Dispose();
+
+        if (_thread != Thread.CurrentThread)
+        {
+            _thread.Join(TimeSpan.FromSeconds(5));
+        }
+
+        if (!_thread.IsAlive)
+        {
+            _ready.Dispose();
+        }
     }
 }

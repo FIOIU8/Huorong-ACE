@@ -226,6 +226,8 @@ public static class SystemToast
                 CreateNoWindow = true,
                 WindowStyle = ProcessWindowStyle.Hidden,
             };
+            startInfo.ArgumentList.Add("-NoProfile");
+            startInfo.ArgumentList.Add("-NonInteractive");
             startInfo.ArgumentList.Add("-ExecutionPolicy");
             startInfo.ArgumentList.Add("Bypass");
             startInfo.ArgumentList.Add("-File");
@@ -237,7 +239,21 @@ public static class SystemToast
                 return false;
             }
 
-            process.WaitForExit(15000);
+            if (!process.WaitForExit(15000))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                    process.WaitForExit();
+                }
+                catch (InvalidOperationException)
+                {
+                    // The process exited between the timeout and Kill call.
+                }
+
+                return false;
+            }
+
             return process.ExitCode == 0;
         }
         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException)
