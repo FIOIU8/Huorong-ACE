@@ -21,18 +21,24 @@ public sealed class ThreatMonitor : IAsyncDisposable
     private readonly IAppLog _log;
     private readonly object _sync = new();
     private readonly SemaphoreSlim _pollGate = new(1, 1);
+    private TaskCompletionSource _reloadsDrained = CompletedSignal();
+    private int _activeReloads;
 
     private HuorongQuarantineReader? _reader;
     private CancellationTokenSource? _stopSource;
     private Task? _worker;
+    private Task? _openTask;
+    private long _readerGeneration;
     private bool _enabled;
     private bool _huorongAvailable;
+    private bool _disposed;
     private ThreatInfo? _lastDetection;
     private DateTimeOffset? _lastDetectionTime;
 
     public ThreatMonitor(AppConfig config, IAppLog? log = null)
     {
         _config = config ?? throw new ArgumentNullException(nameof(config));
+        _config.Normalize();
         _log = log ?? new NullAppLog();
         _enabled = config.MonitorEnabled;
     }
@@ -80,47 +86,80 @@ public sealed class ThreatMonitor : IAsyncDisposable
     /// <summary>Opens the database and starts polling.</summary>
     public void Start()
     {
+        CancellationToken token;
         lock (_sync)
         {
+            ObjectDisposedException.ThrowIf(_disposed, this);
             if (_worker is not null)
             {
                 return;
             }
 
             _stopSource = new CancellationTokenSource();
-            _worker = Task.Run(() => PollLoopAsync(_stopSource.Token));
+            token = _stopSource.Token;
+            _worker = Task.Run(() => PollLoopAsync(token), CancellationToken.None);
+            var generation = ++_readerGeneration;
+            _openTask = Task.Run(() => OpenInitialAsync(_config.LogPath, generation, token), CancellationToken.None);
         }
-
-        // Opening outside the lock keeps Start() from blocking on disk I/O.
-        _ = Task.Run(() =>
-        {
-            TryOpen(_config.LogPath);
-            RaiseStateChanged();
-        });
     }
 
-    private void TryOpen(string path)
+    private async Task OpenInitialAsync(string path, long generation, CancellationToken cancellationToken)
     {
         var reader = new HuorongQuarantineReader(path, _config, _log);
         try
         {
             reader.Open();
+            cancellationToken.ThrowIfCancellationRequested();
+
+            await _pollGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                lock (_sync)
+                {
+                    if (_disposed || generation != _readerGeneration)
+                    {
+                        return;
+                    }
+
+                    _reader = reader;
+                    _huorongAvailable = true;
+                }
+            }
+            finally
+            {
+                _pollGate.Release();
+            }
         }
-        catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException or SqliteException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return;
+        }
+        catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException or SqliteException or IOException or UnauthorizedAccessException)
         {
             _log.Error($"无法打开火绒日志，仅启用测试模式: {ex.Message}", ex);
             lock (_sync)
             {
-                _huorongAvailable = false;
+                if (generation == _readerGeneration)
+                {
+                    _huorongAvailable = false;
+                }
             }
-
-            return;
+        }
+        catch (Exception ex)
+        {
+            _log.Error($"打开火绒日志时发生未处理错误: {ex.Message}", ex);
+            lock (_sync)
+            {
+                if (generation == _readerGeneration)
+                {
+                    _huorongAvailable = false;
+                }
+            }
         }
 
-        lock (_sync)
+        if (!IsDisposed && IsCurrentGeneration(generation))
         {
-            _reader = reader;
-            _huorongAvailable = true;
+            RaiseStateChanged();
         }
     }
 
@@ -197,32 +236,86 @@ public sealed class ThreatMonitor : IAsyncDisposable
     /// </remarks>
     public async Task<bool> ReloadAsync(string path)
     {
-        var reader = new HuorongQuarantineReader(path, _config, _log);
-        try
+        if (string.IsNullOrWhiteSpace(path))
         {
-            reader.Open();
-        }
-        catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException or SqliteException)
-        {
-            _log.Error($"无法打开数据库 {path}: {ex.Message}", ex);
             return false;
         }
 
-        await _pollGate.WaitAsync().ConfigureAwait(false);
-        try
+        CancellationToken cancellationToken;
+        long generation;
+        lock (_sync)
         {
-            lock (_sync)
+            if (_disposed || _stopSource is null)
             {
-                _reader = reader;
-                _huorongAvailable = true;
+                return false;
             }
 
-            _log.Info($"已切换到日志库: {path}");
-            return true;
+            if (_activeReloads++ == 0)
+            {
+                _reloadsDrained = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            }
+
+            generation = ++_readerGeneration;
+            cancellationToken = _stopSource.Token;
+        }
+
+        try
+        {
+            var reader = new HuorongQuarantineReader(path, _config, _log);
+            try
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                reader.Open();
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException or SqliteException or IOException or UnauthorizedAccessException)
+            {
+                _log.Error($"无法打开数据库 {path}: {ex.Message}", ex);
+                return false;
+            }
+
+            try
+            {
+                await _pollGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                return false;
+            }
+            try
+            {
+                lock (_sync)
+                {
+                    if (_disposed || generation != _readerGeneration)
+                    {
+                        return false;
+                    }
+
+                    _reader = reader;
+                    _huorongAvailable = true;
+                }
+
+                _log.Info($"已切换到日志库: {path}");
+                return true;
+            }
+            finally
+            {
+                _pollGate.Release();
+            }
         }
         finally
         {
-            _pollGate.Release();
+            lock (_sync)
+            {
+                if (--_activeReloads == 0)
+                {
+                    _reloadsDrained.TrySetResult();
+                }
+            }
         }
     }
 
@@ -252,18 +345,40 @@ public sealed class ThreatMonitor : IAsyncDisposable
     {
         CancellationTokenSource? stop;
         Task? worker;
+        Task? openTask;
+        Task reloadsDrained;
         lock (_sync)
         {
+            if (_disposed)
+            {
+                return;
+            }
+
+            _disposed = true;
             stop = _stopSource;
             worker = _worker;
+            openTask = _openTask;
+            reloadsDrained = _reloadsDrained.Task;
             _stopSource = null;
             _worker = null;
+            _openTask = null;
         }
 
         if (stop is not null)
         {
-            await stop.CancelAsync().ConfigureAwait(false);
-            stop.Dispose();
+            stop.Cancel();
+        }
+
+        if (openTask is not null)
+        {
+            try
+            {
+                await openTask.ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // Expected during shutdown.
+            }
         }
 
         if (worker is not null)
@@ -278,6 +393,35 @@ public sealed class ThreatMonitor : IAsyncDisposable
             }
         }
 
+        await reloadsDrained.ConfigureAwait(false);
+
+        stop?.Dispose();
         _pollGate.Dispose();
+    }
+
+    private bool IsDisposed
+    {
+        get
+        {
+            lock (_sync)
+            {
+                return _disposed;
+            }
+        }
+    }
+
+    private bool IsCurrentGeneration(long generation)
+    {
+        lock (_sync)
+        {
+            return !_disposed && generation == _readerGeneration;
+        }
+    }
+
+    private static TaskCompletionSource CompletedSignal()
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        signal.SetResult();
+        return signal;
     }
 }
